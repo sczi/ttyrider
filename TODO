@@ -1,8 +1,6 @@
 32/64 bit define
 https://stackoverflow.com/questions/6943862/is-there-a-a-define-for-64-bit-in-gcc
 
-and sending input, see ttyecho
-
-set proper tty settings
+set/restore proper tty settings
 
 hide output
