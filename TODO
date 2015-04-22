@@ -4,3 +4,9 @@ https://stackoverflow.com/questions/6943862/is-there-a-a-define-for-64-bit-in-gc
 set/restore proper tty settings
 
 hide output
+
+https://blog.nelhage.com/2011/02/changing-ctty/
+fork and setsid and change controlling terminal to target and pipe input to
+fork so can TIOCSTI as same user, w/o root
+
+terminal window size check
