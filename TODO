@@ -1,7 +1,9 @@
 32/64 bit define
 https://stackoverflow.com/questions/6943862/is-there-a-a-define-for-64-bit-in-gcc
 
-set/restore proper tty settings
+exit when ptrace'd program exits, also special exit key
+
+TEST: set/restore proper tty settings
 
 hide output
 
