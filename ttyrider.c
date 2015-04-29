@@ -94,8 +94,11 @@ int main(int argc, char **argv) {
     ttySetRaw(STDIN_FILENO, &prev);
 
     /* mirror output in child */
-    if(fork() == 0)
+    pid_t childpid = fork();
+    if(childpid == 0) {
         mirror_output(atoi(argv[1]), atoi(argv[2]));
+        exit(0);
+    }
 
     /* in parent go on to send them our input */
     char devname[80];
@@ -103,10 +106,22 @@ int main(int argc, char **argv) {
     int fd = open(devname, O_WRONLY);
     while(1) {
         char c = getchar();
+
+        /* ctrl-A */
+        if(c == 0x01) {
+            c = getchar();
+            /* ctrl-D */
+            if (c == 0x04)
+                break;
+            else if (c != 0x01)
+                continue;
+        }
+
         ioctl(fd, TIOCSTI, &c);
     }
 
     /* wait on ptrace-ing child to finish */
+    kill(childpid, SIGKILL);
     wait(0);
 
     /* restore original tty settings */
