@@ -1,7 +1,7 @@
 32/64 bit define
 https://stackoverflow.com/questions/6943862/is-there-a-a-define-for-64-bit-in-gcc
 
-exit when ptrace'd program exits, also special exit key
+actually exit parent process as well when ptrace'd program exits
 
 TEST: set/restore proper tty settings
 
@@ -10,5 +10,10 @@ hide output
 https://blog.nelhage.com/2011/02/changing-ctty/
 fork and setsid and change controlling terminal to target and pipe input to
 fork so can TIOCSTI as same user, w/o root
+    - make version of ttyecho that doesn't need root
 
 terminal window size check
+
+add better error checking
+
+fix terminal escape sequences
