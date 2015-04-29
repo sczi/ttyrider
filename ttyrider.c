@@ -17,6 +17,14 @@
 /* target pid and fd to monitor */
 pid_t pid;
 int fd;
+struct termios prev;
+
+void term(int signum) {
+    /* restore original tty settings */
+    tcsetattr(STDIN_FILENO, TCSANOW, &prev);
+    printf("\n");
+    exit(0);
+}
 
 /* from The Linux Programming Interface */
 /* Place terminal referred to by 'fd' in raw mode (noncanonical mode
@@ -87,21 +95,26 @@ void* mirror_output(void *unused) {
             write(1, buf, regs.rdx);
             free(buf);
         }
-        // don't check return value 
+        // don't care about return value of syscall
         ptrace(PTRACE_SYSCALL, pid, 0, 0);
         wait(&status);
         if(WIFEXITED(status))
             break;
     }
 
+    raise(SIGTERM);
     return NULL;
 }
 
 int main(int argc, char **argv) {
     pthread_t output_thread;
     int status;
-    struct termios prev;
     ttySetRaw(STDIN_FILENO, &prev);
+
+    struct sigaction action;
+    memset(&action, 0, sizeof(struct sigaction));
+    action.sa_handler = term;
+    sigaction(SIGTERM, &action, NULL);
 
     pid = atoi(argv[1]);
     fd = atoi(argv[2]);
@@ -110,7 +123,7 @@ int main(int argc, char **argv) {
 
     /* in parent go on to send them our input */
     char devname[80];
-    snprintf(devname, sizeof(devname), "/proc/%s/fd/0", argv[1]);
+    snprintf(devname, sizeof(devname), "/proc/%d/fd/0", pid);
     int fd = open(devname, O_WRONLY);
     while(1) {
         char c = getchar();
@@ -121,6 +134,7 @@ int main(int argc, char **argv) {
             /* ctrl-D */
             if (c == 0x04)
                 break;
+            /* for 2x ctrl-A send a real ctrl-A */
             else if (c != 0x01)
                 continue;
         }
@@ -129,8 +143,11 @@ int main(int argc, char **argv) {
     }
 
     /* wait on ptrace-ing thread to finish */
+    pthread_cancel(output_thread);
     pthread_join(output_thread, NULL);
 
     /* restore original tty settings */
     tcsetattr(STDIN_FILENO, TCSANOW, &prev);
+    printf("\n");
+    return 0;
 }

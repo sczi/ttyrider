@@ -1,10 +1,6 @@
 32/64 bit define
 https://stackoverflow.com/questions/6943862/is-there-a-a-define-for-64-bit-in-gcc
 
-actually exit parent process as well when ptrace'd program exits
-
-TEST: set/restore proper tty settings
-
 hide output
 
 https://blog.nelhage.com/2011/02/changing-ctty/
