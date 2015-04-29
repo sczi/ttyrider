@@ -1,8 +1,6 @@
 32/64 bit define
 https://stackoverflow.com/questions/6943862/is-there-a-a-define-for-64-bit-in-gcc
 
-hide output
-
 https://blog.nelhage.com/2011/02/changing-ctty/
 fork and setsid and change controlling terminal to target and pipe input to
 fork so can TIOCSTI as same user, w/o root
@@ -14,10 +12,15 @@ add better error checking
 
 fix terminal escape sequences
 
-auto-send ctrl-l keys to manually turn on/off hiding
+auto-send ctrl-l
+auto hide/unhide when attacker starts typing and when victim starts typing, key
+combination to turn auto_unhide on/off
 
-getopt
+getopt pid, fd, autosend ctrl-l, autohide
 
 fd table-5 for ssh
 
 add static, 32, and 64 bit builds to makefile
+
+weird bug where setreg and pokedata don't work the second time a program is
+attached?

@@ -17,8 +17,32 @@
 /* target pid and fd to monitor */
 pid_t pid;
 int fd;
+/* saved tty settings */
 struct termios prev;
+/* shared flag to say whether ptrace should hide writes in target process */
+pthread_mutex_t hidden_lock = PTHREAD_MUTEX_INITIALIZER;
+int hidden_flag = 0;
 
+void set_hidden() {
+    pthread_mutex_lock(&hidden_lock);
+    hidden_flag = 1;
+    pthread_mutex_unlock(&hidden_lock);
+}
+
+void unset_hidden() {
+    pthread_mutex_lock(&hidden_lock);
+    hidden_flag = 0;
+    pthread_mutex_unlock(&hidden_lock);
+}
+
+int is_hidden() {
+    pthread_mutex_lock(&hidden_lock);
+    int ret = hidden_flag;
+    pthread_mutex_unlock(&hidden_lock);
+    return ret;
+}
+
+/* sigterm handler */
 void term(int signum) {
     /* restore original tty settings */
     tcsetattr(STDIN_FILENO, TCSANOW, &prev);
@@ -64,6 +88,7 @@ ttySetRaw(int fd, struct termios *prevTermios)
     return 0;
 }
 
+/* display out that pid sends to fd */
 void* mirror_output(void *unused) {
     int status;
 
@@ -85,15 +110,22 @@ void* mirror_output(void *unused) {
          */
         if(regs.orig_rax == SYS_write && regs.rdi == fd) {
             int i;
-            char *buf = malloc(regs.rdx);
+            char *buf = malloc(regs.rdx + sizeof(long));
 
             for(i = 0; i < regs.rdx; i += sizeof(long)) {
                 long val = ptrace(PTRACE_PEEKDATA, pid, regs.rsi + i, 0);
-                memcpy(buf + i, &val, MIN(sizeof(long), regs.rdx - i));
+                memcpy(buf + i, &val, sizeof(long));
             }
 
             write(1, buf, regs.rdx);
             free(buf);
+
+            /* discard writes if hidden_flag is set */
+            if(is_hidden()) {
+                memset(buf, 0, regs.rdx);
+                for(i = 0; i < regs.rdx; i += sizeof(long))
+                    ptrace(PTRACE_POKEDATA, pid, regs.rsi + i, *(long *)(buf + i));
+            }
         }
         // don't care about return value of syscall
         ptrace(PTRACE_SYSCALL, pid, 0, 0);
@@ -131,15 +163,17 @@ int main(int argc, char **argv) {
         /* ctrl-A */
         if(c == 0x01) {
             c = getchar();
-            /* ctrl-D */
-            if (c == 0x04)
+            if (c == 'd')
                 break;
+            else if (c == 's')
+                set_hidden();
+            else if (c == 'q')
+                unset_hidden();
             /* for 2x ctrl-A send a real ctrl-A */
-            else if (c != 0x01)
-                continue;
-        }
-
-        ioctl(fd, TIOCSTI, &c);
+            else if (c == 0x01)
+                ioctl(fd, TIOCSTI, &c);
+        } else
+            ioctl(fd, TIOCSTI, &c);
     }
 
     /* wait on ptrace-ing thread to finish */
