@@ -17,3 +17,11 @@ terminal window size check
 add better error checking
 
 fix terminal escape sequences
+
+auto-send ctrl-l keys to manually turn on/off hiding
+
+getopt
+
+fd table-5 for ssh
+
+add static, 32, and 64 bit builds to makefile
