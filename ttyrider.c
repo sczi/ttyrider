@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <termios.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <sys/ptrace.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -12,6 +13,10 @@
 #include <sys/user.h>
 #include <sys/ioctl.h>
 #define MIN(a,b) (((a) < (b)) ? (a) : (b))
+
+/* target pid and fd to monitor */
+pid_t pid;
+int fd;
 
 /* from The Linux Programming Interface */
 /* Place terminal referred to by 'fd' in raw mode (noncanonical mode
@@ -51,7 +56,7 @@ ttySetRaw(int fd, struct termios *prevTermios)
     return 0;
 }
 
-void mirror_output(pid_t pid, int fd) {
+void* mirror_output(void *unused) {
     int status;
 
     ptrace(PTRACE_ATTACH, pid, 0, 0);
@@ -60,7 +65,6 @@ void mirror_output(pid_t pid, int fd) {
     while(1) {
         ptrace(PTRACE_SYSCALL, pid, 0, 0);
         wait(&status);
-
         if(WIFEXITED(status))
             break;
 
@@ -85,20 +89,24 @@ void mirror_output(pid_t pid, int fd) {
         }
         // don't check return value 
         ptrace(PTRACE_SYSCALL, pid, 0, 0);
-        wait(0);
+        wait(&status);
+        if(WIFEXITED(status))
+            break;
     }
+
+    return NULL;
 }
 
 int main(int argc, char **argv) {
+    pthread_t output_thread;
+    int status;
     struct termios prev;
     ttySetRaw(STDIN_FILENO, &prev);
 
-    /* mirror output in child */
-    pid_t childpid = fork();
-    if(childpid == 0) {
-        mirror_output(atoi(argv[1]), atoi(argv[2]));
-        exit(0);
-    }
+    pid = atoi(argv[1]);
+    fd = atoi(argv[2]);
+    /* mirror output in another thread */
+    status = pthread_create(&output_thread, NULL, mirror_output, NULL);
 
     /* in parent go on to send them our input */
     char devname[80];
@@ -120,9 +128,8 @@ int main(int argc, char **argv) {
         ioctl(fd, TIOCSTI, &c);
     }
 
-    /* wait on ptrace-ing child to finish */
-    kill(childpid, SIGKILL);
-    wait(0);
+    /* wait on ptrace-ing thread to finish */
+    pthread_join(output_thread, NULL);
 
     /* restore original tty settings */
     tcsetattr(STDIN_FILENO, TCSANOW, &prev);
