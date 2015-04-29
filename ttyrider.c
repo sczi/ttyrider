@@ -4,6 +4,7 @@
 #include <syscall.h>
 #include <fcntl.h>
 #include <termios.h>
+#include <unistd.h>
 #include <sys/ptrace.h>
 #include <sys/types.h>
 #include <sys/wait.h>
