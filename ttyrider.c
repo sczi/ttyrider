@@ -52,12 +52,18 @@ ttySetRaw(int fd, struct termios *prevTermios)
 }
 
 void mirror_output(pid_t pid, int fd) {
+    int status;
+
     ptrace(PTRACE_ATTACH, pid, 0, 0);
     wait(0);
 
     while(1) {
         ptrace(PTRACE_SYSCALL, pid, 0, 0);
-        wait(0);
+        wait(&status);
+
+        if(WIFEXITED(status))
+            break;
+
         struct user_regs_struct regs;
         ptrace(PTRACE_GETREGS, pid, 0, &regs);
         /* ssize_t write(int fd, const void *buf, size_t count)
