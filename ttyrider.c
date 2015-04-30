@@ -12,37 +12,64 @@
 #include <sys/reg.h>
 #include <sys/user.h>
 #include <sys/ioctl.h>
-#define MIN(a,b) (((a) < (b)) ? (a) : (b))
 
 /* target pid and fd to monitor */
 pid_t pid;
-int fd;
+int read_fd, write_fd;
 /* saved tty settings */
 struct termios prev;
 /* shared flag to say whether ptrace should hide writes in target process */
-pthread_mutex_t hidden_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+/* should output be hidden */
 int hidden_flag = 0;
+/* hide the next counter input characters */
+int hide_counter = 0;
+int auto_hide = 1;
 
 void set_hidden()
 {
-    pthread_mutex_lock(&hidden_lock);
+    pthread_mutex_lock(&lock);
     hidden_flag = 1;
-    pthread_mutex_unlock(&hidden_lock);
+    pthread_mutex_unlock(&lock);
 }
 
 void unset_hidden()
 {
-    pthread_mutex_lock(&hidden_lock);
+    pthread_mutex_lock(&lock);
     hidden_flag = 0;
-    pthread_mutex_unlock(&hidden_lock);
+    pthread_mutex_unlock(&lock);
 }
 
 int is_hidden()
 {
-    pthread_mutex_lock(&hidden_lock);
+    pthread_mutex_lock(&lock);
     int ret = hidden_flag;
-    pthread_mutex_unlock(&hidden_lock);
+    pthread_mutex_unlock(&lock);
     return ret;
+}
+
+int is_hide_counter_zero()
+{
+    pthread_mutex_lock(&lock);
+    int ret = (hide_counter == 0);
+    pthread_mutex_unlock(&lock);
+    return ret;
+}
+
+void subtract_hide_counter(int dec)
+{
+    pthread_mutex_lock(&lock);
+    hide_counter -= dec;
+    if(hide_counter < 0)
+        hide_counter = 0;
+    pthread_mutex_unlock(&lock);
+}
+
+void increment_hide_counter()
+{
+    pthread_mutex_lock(&lock);
+    hide_counter++;
+    pthread_mutex_unlock(&lock);
 }
 
 /* sigterm handler */
@@ -112,7 +139,7 @@ void* mirror_output(void *unused)
          * buf:  regs.rsi
          * size: regs.rdx
          */
-        if(regs.orig_rax == SYS_write && regs.rdi == fd) {
+        if(regs.orig_rax == SYS_write && regs.rdi == write_fd) {
             int i;
             char *buf = malloc(regs.rdx + sizeof(long));
 
@@ -130,12 +157,20 @@ void* mirror_output(void *unused)
                 for(i = 0; i < regs.rdx; i += sizeof(long))
                     ptrace(PTRACE_POKEDATA, pid, regs.rsi + i, *(long *)(buf + i));
             }
+        } else if(regs.orig_rax == SYS_read && regs.rdi == read_fd && is_hide_counter_zero()) {
+            unset_hidden();
         }
-        // don't care about return value of syscall
+
+        /* return of the syscall */
         ptrace(PTRACE_SYSCALL, pid, 0, 0);
         wait(&status);
         if(WIFEXITED(status))
             break;
+        if(regs.orig_rax == SYS_read && regs.rdi == read_fd) {
+            ptrace(PTRACE_GETREGS, pid, 0, &regs);
+            if(regs.rax >= 0)
+                subtract_hide_counter(regs.rax);
+        }
     }
 
     raise(SIGTERM);
@@ -154,7 +189,8 @@ int main(int argc, char **argv)
     sigaction(SIGTERM, &action, NULL);
 
     pid = atoi(argv[1]);
-    fd = atoi(argv[2]);
+    read_fd = atoi(argv[2]);
+    write_fd = atoi(argv[3]);
     /* mirror output in another thread */
     status = pthread_create(&output_thread, NULL, mirror_output, NULL);
 
@@ -162,8 +198,14 @@ int main(int argc, char **argv)
     char devname[80];
     snprintf(devname, sizeof(devname), "/proc/%d/fd/0", pid);
     int fd = open(devname, O_WRONLY);
+    char c;
+    /* send a refresh at the start */
+    c = 0x0c;
+    set_hidden();
+    increment_hide_counter();
+    ioctl(fd, TIOCSTI, &c);
     while(1) {
-        char c = getchar();
+        c = getchar();
 
         /* ctrl-A */
         if(c == 0x01) {
@@ -174,11 +216,23 @@ int main(int argc, char **argv)
                 set_hidden();
             else if (c == 'q')
                 unset_hidden();
+            else if (c == 'h')
+                auto_hide = !auto_hide;
             /* for 2x ctrl-A send a real ctrl-A */
-            else if (c == 0x01)
+            else if (c == 0x01) {
+                if (auto_hide) {
+                    set_hidden();
+                    increment_hide_counter();
+                }
                 ioctl(fd, TIOCSTI, &c);
-        } else
+            }
+        } else {
+            if (auto_hide) {
+                set_hidden();
+                increment_hide_counter();
+            }
             ioctl(fd, TIOCSTI, &c);
+        }
     }
 
     /* wait on ptrace-ing thread to finish */
