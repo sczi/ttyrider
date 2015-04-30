@@ -19,3 +19,5 @@ add static, 32, and 64 bit builds to makefile
 
 weird bug where setreg and pokedata don't work the second time a program is
 attached?
+
+fix freeze after child process forks, like when attaching to zsh
