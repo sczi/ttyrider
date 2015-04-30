@@ -8,7 +8,8 @@ fork so can TIOCSTI as same user, w/o root
 
 add better error checking
 
-fix terminal escape sequences
+fix terminal escape sequences --see INFO file, check other characters from home
+computer
 
 getopt pid, fd, autosend ctrl-l, autohide
 
@@ -21,3 +22,4 @@ weird bug where setreg and pokedata don't work the second time a program is
 attached?
 
 fix freeze after child process forks, like when attaching to zsh
+bugs when attaching zsh that used su
