@@ -23,19 +23,22 @@ struct termios prev;
 pthread_mutex_t hidden_lock = PTHREAD_MUTEX_INITIALIZER;
 int hidden_flag = 0;
 
-void set_hidden() {
+void set_hidden()
+{
     pthread_mutex_lock(&hidden_lock);
     hidden_flag = 1;
     pthread_mutex_unlock(&hidden_lock);
 }
 
-void unset_hidden() {
+void unset_hidden()
+{
     pthread_mutex_lock(&hidden_lock);
     hidden_flag = 0;
     pthread_mutex_unlock(&hidden_lock);
 }
 
-int is_hidden() {
+int is_hidden()
+{
     pthread_mutex_lock(&hidden_lock);
     int ret = hidden_flag;
     pthread_mutex_unlock(&hidden_lock);
@@ -43,7 +46,8 @@ int is_hidden() {
 }
 
 /* sigterm handler */
-void term(int signum) {
+void term(int signum)
+{
     /* restore original tty settings */
     tcsetattr(STDIN_FILENO, TCSANOW, &prev);
     printf("\n");
@@ -56,8 +60,7 @@ void term(int signum) {
    or -1 on error. If 'prevTermios' is non-NULL, then use the buffer to
    which it points to return the previous terminal settings. */
 
-int
-ttySetRaw(int fd, struct termios *prevTermios)
+int ttySetRaw(int fd, struct termios *prevTermios)
 {
     struct termios t;
 
@@ -89,7 +92,8 @@ ttySetRaw(int fd, struct termios *prevTermios)
 }
 
 /* display out that pid sends to fd */
-void* mirror_output(void *unused) {
+void* mirror_output(void *unused)
+{
     int status;
 
     ptrace(PTRACE_ATTACH, pid, 0, 0);
@@ -138,7 +142,8 @@ void* mirror_output(void *unused) {
     return NULL;
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     pthread_t output_thread;
     int status;
     ttySetRaw(STDIN_FILENO, &prev);
