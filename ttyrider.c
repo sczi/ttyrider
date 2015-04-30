@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <syscall.h>
 #include <fcntl.h>
@@ -15,7 +16,7 @@
 
 /* target pid and fd to monitor */
 pid_t pid;
-int read_fd, write_fd;
+int read_fd, write_fd, target_tty_fd;
 /* saved tty settings */
 struct termios prev;
 /* shared flag to say whether ptrace should hide writes in target process */
@@ -25,6 +26,18 @@ int hidden_flag = 0;
 /* hide the next counter input characters */
 int hide_counter = 0;
 int auto_hide = 1;
+
+void die(const char* format, ...)
+{
+    va_list argptr;
+    va_start(argptr, format);
+    vfprintf(stderr, format, argptr);
+    va_end(argptr);
+    /* restore original tty settings */
+    tcsetattr(STDIN_FILENO, TCSANOW, &prev);
+    printf("\n");
+    exit(1);
+}
 
 void set_hidden()
 {
@@ -72,6 +85,16 @@ void increment_hide_counter()
     pthread_mutex_unlock(&lock);
 }
 
+void check_window_size()
+{
+    struct winsize ws_ours, ws_target;
+    ioctl(0, TIOCGWINSZ, &ws_ours);
+    ioctl(target_tty_fd, TIOCGWINSZ, &ws_target);
+    if (ws_ours.ws_row < ws_target.ws_row || ws_ours.ws_col < ws_target.ws_col)
+        die("current tty is smaller than the tty you want to hijack: %dx%d vs %dx%d\n",
+                ws_ours.ws_row, ws_ours.ws_col, ws_target.ws_row, ws_target.ws_col);
+}
+
 /* sigterm handler */
 void term(int signum)
 {
@@ -79,6 +102,12 @@ void term(int signum)
     tcsetattr(STDIN_FILENO, TCSANOW, &prev);
     printf("\n");
     exit(0);
+}
+
+/* make sure our tty is still large enough for the one we're hijacking */
+static void sigwinchHandler(int sig)
+{
+    check_window_size();
 }
 
 /* from The Linux Programming Interface */
@@ -118,7 +147,7 @@ int ttySetRaw(int fd, struct termios *prevTermios)
     return 0;
 }
 
-/* display out that pid sends to fd */
+/* display output that pid sends to fd */
 void* mirror_output(void *unused)
 {
     int status;
@@ -187,6 +216,9 @@ int main(int argc, char **argv)
     memset(&action, 0, sizeof(struct sigaction));
     action.sa_handler = term;
     sigaction(SIGTERM, &action, NULL);
+    memset(&action, 0, sizeof(struct sigaction));
+    action.sa_handler = sigwinchHandler;
+    sigaction(SIGWINCH, &action, NULL);
 
     pid = atoi(argv[1]);
     read_fd = atoi(argv[2]);
@@ -197,13 +229,16 @@ int main(int argc, char **argv)
     /* in parent go on to send them our input */
     char devname[80];
     snprintf(devname, sizeof(devname), "/proc/%d/fd/0", pid);
-    int fd = open(devname, O_WRONLY);
+    target_tty_fd = open(devname, O_WRONLY);
+    /* check that our terminal is large enough for the display we're mirroring */
+    check_window_size();
+
     char c;
     /* send a refresh at the start */
     c = 0x0c;
     set_hidden();
     increment_hide_counter();
-    ioctl(fd, TIOCSTI, &c);
+    ioctl(target_tty_fd, TIOCSTI, &c);
     while(1) {
         c = getchar();
 
@@ -224,14 +259,14 @@ int main(int argc, char **argv)
                     set_hidden();
                     increment_hide_counter();
                 }
-                ioctl(fd, TIOCSTI, &c);
+                ioctl(target_tty_fd, TIOCSTI, &c);
             }
         } else {
             if (auto_hide) {
                 set_hidden();
                 increment_hide_counter();
             }
-            ioctl(fd, TIOCSTI, &c);
+            ioctl(target_tty_fd, TIOCSTI, &c);
         }
     }
 

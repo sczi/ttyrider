@@ -6,8 +6,6 @@ fork and setsid and change controlling terminal to target and pipe input to
 fork so can TIOCSTI as same user, w/o root
     - make version of ttyecho that doesn't need root
 
-terminal window size check
-
 add better error checking
 
 fix terminal escape sequences
