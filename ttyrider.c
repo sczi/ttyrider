@@ -196,7 +196,7 @@ void* mirror_output(void *unused)
         if (WIFEXITED(status))
             break;
         if (regs.orig_rax == SYS_read && (regs.rdi == read_fd || regs.rdi == 0)) {
-            if (is_hide_counter_zero())
+            if (is_hide_counter_zero() && auto_hide)
                 unset_hidden();
 
             ptrace(PTRACE_GETREGS, pid, 0, &regs);
