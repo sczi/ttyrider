@@ -26,7 +26,6 @@ int hidden_flag = 0;
 /* hide the next counter input characters */
 int hide_counter = 0;
 int auto_hide = 1;
-FILE *debug_log;
 
 void reset_tty_and_exit(int status)
 {
@@ -181,9 +180,6 @@ void* mirror_output(void *unused)
             }
 
             write(1, buf, regs.rdx);
-            /* fprintf(debug_log, "sending output:\n"); */
-            /* fflush(debug_log); */
-            /* write(fileno(debug_log), buf, regs.rdx); */
             free(buf);
 
             /* discard writes if hidden_flag is set */
@@ -215,7 +211,6 @@ void* mirror_output(void *unused)
 
 int main(int argc, char **argv)
 {
-    /* debug_log = fopen("ttyrider.log", "w"); */
     pthread_t output_thread;
     int status;
     ttySetRaw(STDIN_FILENO, &prev);
@@ -241,21 +236,21 @@ int main(int argc, char **argv)
     /* check that our terminal is large enough for the display we're mirroring */
     check_window_size();
 
-    int c;
+    int c, num_read, i;
+    char buf[2048];
     /* send a refresh at the start */
     c = 0x0c;
     set_hidden();
     increment_hide_counter();
     ioctl(target_tty_fd, TIOCSTI, &c);
     while (1) {
-        c = getchar();
-        if (c == EOF)
+        num_read = read(0, buf, sizeof(buf));
+
+        if (num_read <= 0)
             continue;
-        /* fprintf(debug_log, "got char: %0x\n", c); */
-        /* fflush(debug_log); */
 
         /* ctrl-A */
-        if (c == 0x01) {
+        if (buf[0] == 0x01) {
             c = getchar();
             if (c == 'd')
                 break;
@@ -273,12 +268,15 @@ int main(int argc, char **argv)
                 }
                 ioctl(target_tty_fd, TIOCSTI, &c);
             }
-        } else {
-            if (auto_hide) {
-                set_hidden();
-                increment_hide_counter();
+        /* don't send escape reponses */
+        } else if(buf[0] != 0x1b) {
+            for (i = 0; i < num_read; i++) {
+                if (auto_hide) {
+                    set_hidden();
+                    increment_hide_counter();
+                }
+                ioctl(target_tty_fd, TIOCSTI, buf + i);
             }
-            ioctl(target_tty_fd, TIOCSTI, &c);
         }
     }
 
