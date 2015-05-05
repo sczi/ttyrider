@@ -1,11 +1,6 @@
 32/64 bit define
 https://stackoverflow.com/questions/6943862/is-there-a-a-define-for-64-bit-in-gcc
 
-https://blog.nelhage.com/2011/02/changing-ctty/
-fork and setsid and change controlling terminal to target and pipe input to
-fork so can TIOCSTI as same user, w/o root
-    - make version of ttyecho that doesn't need root
-
 add better error checking
 
 getopt pid, fd, autosend ctrl-l, autohide
@@ -16,7 +11,7 @@ is there a way to autodetect the read and write fd?
 add static, 32, and 64 bit builds to makefile
 
 weird bug where setreg and pokedata don't work the second time a program is
-attached?
+attached? -- totally broken when non-root
 
 fix freeze after child process forks, like when attaching to zsh
 bugs when attaching zsh that used su

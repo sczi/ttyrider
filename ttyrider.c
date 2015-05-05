@@ -16,11 +16,14 @@
 
 /* target pid and fd to monitor */
 pid_t pid;
-int read_fd, write_fd, target_tty_fd;
+int read_fd, write_fd, target_tty_fd, have_root;
 /* saved tty settings */
 struct termios prev;
 /* shared flag to say whether ptrace should hide writes in target process */
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+/* for sending chars for the ptrace thread to inject */
+char forced_input_char;
+pthread_cond_t input_ready;
 /* should output be hidden */
 int hidden_flag = 0;
 /* hide the next counter input characters */
@@ -29,6 +32,7 @@ int auto_hide = 1;
 
 void reset_tty_and_exit(int status)
 {
+    ptrace(PTRACE_DETACH, pid, 0, 0);
     /* restore original tty settings */
     tcsetattr(STDIN_FILENO, TCSANOW, &prev);
     printf("\n");
@@ -149,19 +153,81 @@ int ttySetRaw(int fd, struct termios *prevTermios)
     return 0;
 }
 
-/* display output that pid sends to fd */
-void* mirror_output(void *unused)
+void inject_input(long c)
+{
+#if defined __x86_64__
+#   define ORIG_AX orig_rax
+#   define ARG1 rdi
+#   define ARG2 rsi
+#   define ARG3 rdx
+#   define SP rsp
+#   define AX rax
+#   define IP rip
+#else
+#   define ORIG_AX orig_eax
+#   define ARG1 ebx
+#   define ARG2 ecx
+#   define ARG3 edx
+#   define SP esp
+#   define AX eax
+#   define IP eip
+#endif
+    struct user_regs_struct regs, saved;
+    long saved_stack;
+
+    ptrace(PTRACE_SYSCALL, pid, 0, 0);
+    waitpid(pid, NULL, 0);
+    ptrace(PTRACE_GETREGS, pid, 0, &regs);
+    /* save the current registers */
+    saved = regs;
+    /* make the ioctl call with the character copied to rsp */
+    regs.ORIG_AX = SYS_ioctl;
+    regs.ARG1 = 0;
+    regs.ARG2 = TIOCSTI;
+    regs.ARG3 = regs.SP;
+    saved_stack = ptrace(PTRACE_PEEKDATA, pid, regs.SP, 0);
+    ptrace(PTRACE_POKEDATA, pid, regs.SP, c);
+    ptrace(PTRACE_SETREGS, pid, 0, &regs);
+    ptrace(PTRACE_SINGLESTEP, pid, 0, 0);
+    waitpid(pid, NULL, 0);
+    /* restore the registers and rsp */
+    saved.IP -= 2;
+    saved.AX = saved.ORIG_AX;
+    ptrace(PTRACE_SETREGS, pid, 0, &saved);
+    ptrace(PTRACE_POKEDATA, pid, regs.SP, saved_stack);
+}
+
+void handle_input_and_wait_for_syscall()
 {
     int status;
+    while (1) {
+        ptrace(PTRACE_SYSCALL, pid, 0, 0);
+        wait(&status);
+        if (WIFSTOPPED(status)) {
+            if (WSTOPSIG(status) == SIGTRAP) {
+                return;
+            } else if (WSTOPSIG(status) == SIGSTOP) {
+                pthread_mutex_lock(&lock);
+                inject_input(forced_input_char);
+                forced_input_char = 0;
+                pthread_cond_signal(&input_ready);
+                pthread_mutex_unlock(&lock);
+            }
+        }
 
+        if (WIFEXITED(status))
+            raise(SIGTERM);
+    }
+}
+
+/* display output that pid sends to fd */
+void* ptrace_target(void *unused)
+{
     ptrace(PTRACE_ATTACH, pid, 0, 0);
     wait(0);
 
     while (1) {
-        ptrace(PTRACE_SYSCALL, pid, 0, 0);
-        wait(&status);
-        if (WIFEXITED(status))
-            break;
+        handle_input_and_wait_for_syscall();
 
         struct user_regs_struct regs;
         ptrace(PTRACE_GETREGS, pid, 0, &regs);
@@ -191,10 +257,7 @@ void* mirror_output(void *unused)
         }
 
         /* return of the syscall */
-        ptrace(PTRACE_SYSCALL, pid, 0, 0);
-        wait(&status);
-        if (WIFEXITED(status))
-            break;
+        handle_input_and_wait_for_syscall();
         if (regs.orig_rax == SYS_read && (regs.rdi == read_fd || regs.rdi == 0)) {
             if (is_hide_counter_zero() && auto_hide)
                 unset_hidden();
@@ -205,14 +268,33 @@ void* mirror_output(void *unused)
         }
     }
 
-    raise(SIGTERM);
     return NULL;
+}
+
+/* send input to target */
+void send_input(char c)
+{
+    /* if we have root we can just TIOCSTI,
+     * otherwise we need to ptrace and inject the ioctl */
+    if (have_root) {
+        if (auto_hide) {
+            set_hidden();
+            increment_hide_counter();
+        }
+        ioctl(target_tty_fd, TIOCSTI, &c);
+    } else {
+        pthread_mutex_lock(&lock);
+        while (forced_input_char != 0)
+            pthread_cond_wait(&input_ready, &lock);
+        forced_input_char = c;
+        kill(pid, SIGSTOP);
+        pthread_mutex_unlock(&lock);
+    }
 }
 
 int main(int argc, char **argv)
 {
-    pthread_t output_thread;
-    int status;
+    pthread_t ptrace_thread;
     ttySetRaw(STDIN_FILENO, &prev);
 
     struct sigaction action;
@@ -227,22 +309,28 @@ int main(int argc, char **argv)
     read_fd = atoi(argv[2]);
     write_fd = atoi(argv[3]);
     /* mirror output in another thread */
-    status = pthread_create(&output_thread, NULL, mirror_output, NULL);
+    pthread_create(&ptrace_thread, NULL, ptrace_target, NULL);
 
-    /* in parent go on to send them our input */
+    if (geteuid() == 0)
+        have_root = 1;
+    else
+        have_root = 0;
+
     char devname[80];
     snprintf(devname, sizeof(devname), "/proc/%d/fd/0", pid);
     target_tty_fd = open(devname, O_WRONLY);
+
     /* check that our terminal is large enough for the display we're mirroring */
     check_window_size();
 
+    /* in parent go on to send them our input */
     int c, num_read, i;
     char buf[2048];
+
     /* send a refresh at the start */
-    c = 0x0c;
-    set_hidden();
-    increment_hide_counter();
-    ioctl(target_tty_fd, TIOCSTI, &c);
+    if (is_hidden() || auto_hide)
+        send_input(0x0c);
+
     while (1) {
         num_read = read(0, buf, sizeof(buf));
 
@@ -261,28 +349,19 @@ int main(int argc, char **argv)
             else if (c == 'h')
                 auto_hide = !auto_hide;
             /* for 2x ctrl-A send a real ctrl-A */
-            else if (c == 0x01) {
-                if (auto_hide) {
-                    set_hidden();
-                    increment_hide_counter();
-                }
-                ioctl(target_tty_fd, TIOCSTI, &c);
-            }
+            else if (c == 0x01)
+                send_input(c);
         /* don't send escape reponses */
         } else if(buf[0] != 0x1b) {
-            for (i = 0; i < num_read; i++) {
-                if (auto_hide) {
-                    set_hidden();
-                    increment_hide_counter();
-                }
-                ioctl(target_tty_fd, TIOCSTI, buf + i);
-            }
+            for (i = 0; i < num_read; i++)
+                send_input(buf[i]);
         }
     }
 
     /* wait on ptrace-ing thread to finish */
-    pthread_cancel(output_thread);
-    pthread_join(output_thread, NULL);
+    pthread_cancel(ptrace_thread);
+    pthread_join(ptrace_thread, NULL);
 
     reset_tty_and_exit(0);
+    return 0;
 }
