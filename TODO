@@ -1,6 +1,3 @@
-32/64 bit define
-https://stackoverflow.com/questions/6943862/is-there-a-a-define-for-64-bit-in-gcc
-
 add better error checking
 
 getopt pid, fd, autosend ctrl-l, autohide
@@ -12,3 +9,5 @@ add static, 32, and 64 bit builds to makefile
 
 fix freeze after child process forks, like when attaching to zsh
 bugs when attaching zsh that used su
+
+occasionally supends target on startup when non-root?

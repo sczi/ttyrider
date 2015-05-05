@@ -30,6 +30,25 @@ int hidden_flag = 0;
 int hide_counter = 0;
 int auto_hide = 1;
 
+/* for 32-bit vs 64-bit ptrace code */
+#if defined __x86_64__
+#   define ORIG_AX orig_rax
+#   define ARG1 rdi
+#   define ARG2 rsi
+#   define ARG3 rdx
+#   define SP rsp
+#   define AX rax
+#   define IP rip
+#else
+#   define ORIG_AX orig_eax
+#   define ARG1 ebx
+#   define ARG2 ecx
+#   define ARG3 edx
+#   define SP esp
+#   define AX eax
+#   define IP eip
+#endif
+
 void reset_tty_and_exit(int status)
 {
     ptrace(PTRACE_DETACH, pid, 0, 0);
@@ -155,23 +174,6 @@ int ttySetRaw(int fd, struct termios *prevTermios)
 
 void inject_input(long c)
 {
-#if defined __x86_64__
-#   define ORIG_AX orig_rax
-#   define ARG1 rdi
-#   define ARG2 rsi
-#   define ARG3 rdx
-#   define SP rsp
-#   define AX rax
-#   define IP rip
-#else
-#   define ORIG_AX orig_eax
-#   define ARG1 ebx
-#   define ARG2 ecx
-#   define ARG3 edx
-#   define SP esp
-#   define AX eax
-#   define IP eip
-#endif
     struct user_regs_struct regs, saved;
     long saved_stack;
 
@@ -236,35 +238,35 @@ void* ptrace_target(void *unused)
          * buf:  regs.rsi
          * size: regs.rdx
          */
-        if (regs.orig_rax == SYS_write && (regs.rdi == write_fd || regs.rdi == 1)) {
+        if (regs.ORIG_AX == SYS_write && (regs.ARG1 == write_fd || regs.ARG1 == 1)) {
             int i;
-            char *buf = malloc(regs.rdx + sizeof(long));
+            char *buf = malloc(regs.ARG3 + sizeof(long));
 
-            for (i = 0; i < regs.rdx; i += sizeof(long)) {
-                long val = ptrace(PTRACE_PEEKDATA, pid, regs.rsi + i, 0);
+            for (i = 0; i < regs.ARG3; i += sizeof(long)) {
+                long val = ptrace(PTRACE_PEEKDATA, pid, regs.ARG2 + i, 0);
                 memcpy(buf + i, &val, sizeof(long));
             }
 
-            write(1, buf, regs.rdx);
+            write(1, buf, regs.ARG3);
             free(buf);
 
             /* discard writes if hidden_flag is set */
             if (is_hidden()) {
-                memset(buf, 0, regs.rdx);
-                for (i = 0; i < regs.rdx; i += sizeof(long))
-                    ptrace(PTRACE_POKEDATA, pid, regs.rsi + i, *(long *)(buf + i));
+                memset(buf, 0, regs.ARG3);
+                for (i = 0; i < regs.ARG3; i += sizeof(long))
+                    ptrace(PTRACE_POKEDATA, pid, regs.ARG2 + i, *(long *)(buf + i));
             }
         }
 
         /* return of the syscall */
         handle_input_and_wait_for_syscall();
-        if (regs.orig_rax == SYS_read && (regs.rdi == read_fd || regs.rdi == 0)) {
+        if (regs.ORIG_AX == SYS_read && (regs.ARG1 == read_fd || regs.ARG1 == 0)) {
             if (is_hide_counter_zero() && auto_hide)
                 unset_hidden();
 
             ptrace(PTRACE_GETREGS, pid, 0, &regs);
-            if (regs.rax >= 0)
-                subtract_hide_counter(regs.rax);
+            if (regs.AX >= 0)
+                subtract_hide_counter(regs.AX);
         }
     }
 
