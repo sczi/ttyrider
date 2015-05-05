@@ -22,7 +22,7 @@ struct termios prev;
 /* shared flag to say whether ptrace should hide writes in target process */
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 /* for sending chars for the ptrace thread to inject */
-char forced_input_char;
+char forced_input_char = 1;
 pthread_cond_t input_ready;
 /* should output be hidden */
 int hidden_flag = 0;
@@ -51,7 +51,6 @@ int auto_hide = 1;
 
 void reset_tty_and_exit(int status)
 {
-    ptrace(PTRACE_DETACH, pid, 0, 0);
     /* restore original tty settings */
     tcsetattr(STDIN_FILENO, TCSANOW, &prev);
     printf("\n");
@@ -227,6 +226,12 @@ void* ptrace_target(void *unused)
 {
     ptrace(PTRACE_ATTACH, pid, 0, 0);
     wait(0);
+
+    /* don't want it sending SIGSTOP trying to inject input until attached */
+    pthread_mutex_lock(&lock);
+    forced_input_char = 0;
+    pthread_cond_signal(&input_ready);
+    pthread_mutex_unlock(&lock);
 
     while (1) {
         handle_input_and_wait_for_syscall();

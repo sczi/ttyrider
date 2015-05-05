@@ -7,6 +7,3 @@ is there a way to autodetect the read and write fd?
 
 fix freeze after child process forks, like when attaching to zsh
 bugs when attaching zsh that used su
-
-occasionally supends target on startup when non-root? from sending SIGSTOP
-before ptrace is attached
