@@ -10,8 +10,5 @@ is there a way to autodetect the read and write fd?
 
 add static, 32, and 64 bit builds to makefile
 
-weird bug where setreg and pokedata don't work the second time a program is
-attached? -- totally broken when non-root
-
 fix freeze after child process forks, like when attaching to zsh
 bugs when attaching zsh that used su

