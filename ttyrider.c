@@ -183,7 +183,7 @@ void inject_input(long c)
     saved = regs;
     /* make the ioctl call with the character copied to rsp */
     regs.ORIG_AX = SYS_ioctl;
-    regs.ARG1 = 0;
+    regs.ARG1 = read_fd;
     regs.ARG2 = TIOCSTI;
     regs.ARG3 = regs.SP;
     saved_stack = ptrace(PTRACE_PEEKDATA, pid, regs.SP, 0);
@@ -217,7 +217,7 @@ void handle_input_and_wait_for_syscall()
         }
 
         if (WIFEXITED(status))
-            raise(SIGTERM);
+            reset_tty_and_exit(0);
     }
 }
 
@@ -324,7 +324,7 @@ int main(int argc, char **argv)
         have_root = 0;
 
     char devname[80];
-    snprintf(devname, sizeof(devname), "/proc/%d/fd/0", pid);
+    snprintf(devname, sizeof(devname), "/proc/%d/fd/%d", pid, read_fd);
     target_tty_fd = open(devname, O_WRONLY);
 
     /* check that our terminal is large enough for the display we're mirroring */
