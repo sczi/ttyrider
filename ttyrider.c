@@ -291,7 +291,8 @@ void handle_input_and_wait_for_syscall()
 /* display output that pid sends to fd */
 void* ptrace_target(void *unused)
 {
-    ptrace(PTRACE_ATTACH, pid, 0, 0);
+    if (ptrace(PTRACE_ATTACH, pid, 0, 0) == -1)
+        die("couldn't attach to target (are you not root and is /proc/sys/kernel/yama/ptrace_scope 1?)");
     wait(0);
 
     /* don't want it sending SIGSTOP trying to inject input until attached */
@@ -392,6 +393,9 @@ int main(int argc, char **argv)
     char devname[80];
     snprintf(devname, sizeof(devname), "/proc/%d/fd/%d", pid, read_fd);
     target_tty_fd = open(devname, O_WRONLY);
+
+    if (target_tty_fd == -1)
+        die("couldn't open target's tty\n");
 
     /* check that our terminal is large enough for the display we're mirroring */
     check_window_size();

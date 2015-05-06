@@ -1,4 +1,2 @@
-add better error checking
-
 fd table-5 for ssh
 is there a way to autodetect the read and write fd?
