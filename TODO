@@ -1,9 +1,4 @@
 add better error checking
 
-getopt pid, fd, autosend ctrl-l, autohide
-
 fd table-5 for ssh
 is there a way to autodetect the read and write fd?
-
-fix freeze after child process forks, like when attaching to zsh
-bugs when attaching zsh that used su

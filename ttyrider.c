@@ -13,10 +13,11 @@
 #include <sys/reg.h>
 #include <sys/user.h>
 #include <sys/ioctl.h>
+#include <getopt.h>
 
 /* target pid and fd to monitor */
 pid_t pid;
-int read_fd, write_fd, target_tty_fd, have_root;
+int read_fd=0, write_fd=1, target_tty_fd, have_root;
 /* saved tty settings */
 struct termios prev;
 /* shared flag to say whether ptrace should hide writes in target process */
@@ -29,6 +30,7 @@ int hidden_flag = 0;
 /* hide the next counter input characters */
 int hide_counter = 0;
 int auto_hide = 1;
+int send_clear = 1;
 
 /* for 32-bit vs 64-bit ptrace code */
 #if defined __x86_64__
@@ -48,6 +50,71 @@ int auto_hide = 1;
 #   define AX eax
 #   define IP eip
 #endif
+
+void usage(void)
+{
+    fprintf(stderr,
+            "usage:\n"
+            "   ttyrider -p pid [-h] [-l 0 or 1] [-a 0 or 1] [-r input_fd] [-w output_fd]\n"
+            "       -p pid:         pid of the target\n"
+            "       -h:             display this help message\n"
+            "       -l:             send ctrl-L (refresh) after connecting, default is 1\n"
+            "       -a:             start with autohiding on, default is 1\n"
+            "\n"
+            "       (these usually aren't needed -- defaults are included for ssh, otherwise it will assume stdin and stdout)\n"
+            "       -r input_fd:    fd number that the target reads from\n"
+            "       -w output_fd:    fd number that the target writes to\n"
+            "\n"
+            "keyboard shortcuts:\n"
+            "   ctrl-a d:       exit (IMPORTANT, as ctrl-c and ctrl-z will be sent to the target)\n"
+            "   ctrl-a s:       hide output in the target process\n"
+            "   ctrl-a q:       resume output in the target process\n"
+            "   ctrl-a h:       toggle autohide mode\n"
+            "   ctrl-a ctrl-a:  send an actual ctrl-a to target\n"
+            "\n"
+            "autohide mode:\n"
+            "   this will start hiding output whenever you start typing input,\n"
+            "   and resume output whenever the actual user of the target types something\n"
+            "\n"
+            );
+}
+
+void process_args(int argc, char **argv)
+{
+    int c;
+
+    while (1) {
+        c = getopt(argc, argv, "p:hl:a:r:w:");
+        switch (c) {
+            fprintf(stderr, "hi %c\n", c);
+            case 'p': pid = atoi(optarg); break;
+            case 'h': usage(); exit(0);
+            case 'l':
+                      if (!(strcmp(optarg, "0") == 0 || strcmp(optarg, "1") == 0)) {
+                          fprintf(stderr, "-l must be 0 or 1\n\n");
+                          usage();
+                          exit(1);
+                      }
+                      send_clear = atoi(optarg); break;
+            case 'a':
+                      if (!(strcmp(optarg, "0") == 0 || strcmp(optarg, "1") == 0)) {
+                          fprintf(stderr, "-a must be 0 or 1\n\n");
+                          usage();
+                          exit(1);
+                      }
+                      auto_hide = atoi(optarg); break;
+            case 'r': read_fd = atoi(optarg); break;
+            case 'w': write_fd = atoi(optarg); break;
+        }
+        if (c == -1)
+            break;
+    }
+
+    if (!pid) {
+        usage();
+        exit(1);
+    }
+}
 
 void reset_tty_and_exit(int status)
 {
@@ -302,6 +369,8 @@ void send_input(char c)
 int main(int argc, char **argv)
 {
     pthread_t ptrace_thread;
+    process_args(argc, argv);
+
     ttySetRaw(STDIN_FILENO, &prev);
 
     struct sigaction action;
@@ -312,9 +381,6 @@ int main(int argc, char **argv)
     action.sa_handler = sigwinchHandler;
     sigaction(SIGWINCH, &action, NULL);
 
-    pid = atoi(argv[1]);
-    read_fd = atoi(argv[2]);
-    write_fd = atoi(argv[3]);
     /* mirror output in another thread */
     pthread_create(&ptrace_thread, NULL, ptrace_target, NULL);
 
@@ -335,7 +401,7 @@ int main(int argc, char **argv)
     char buf[2048];
 
     /* send a refresh at the start */
-    if (is_hidden() || auto_hide)
+    if (send_clear)
         send_input(0x0c);
 
     while (1) {
