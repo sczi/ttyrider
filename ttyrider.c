@@ -17,15 +17,15 @@
 
 /* target pid and fd to monitor */
 pid_t pid;
-int read_fd=0, write_fd=1, target_tty_fd, have_root;
+int read_fd=-1, write_fd=-1, target_tty_fd, have_root;
 /* saved tty settings */
 struct termios prev;
-/* shared flag to say whether ptrace should hide writes in target process */
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 /* for sending chars for the ptrace thread to inject */
 char forced_input_char = 1;
+/* when the ptrace thread is ready to receive input to inject */
 pthread_cond_t input_ready;
-/* should output be hidden */
+/* shared flag to say whether ptrace should hide writes in target process */
 int hidden_flag = 0;
 /* hide the next counter input characters */
 int hide_counter = 0;
@@ -367,10 +367,40 @@ void send_input(char c)
     }
 }
 
+/* return the process name for a pid */
+char* getname(int pid)
+{
+    FILE *fp;
+    char *line = NULL;
+    size_t len = 0;
+    char filename[80];
+    snprintf(filename, sizeof(filename), "/proc/%d/cmdline", pid);
+    fp = fopen(filename, "r");
+    if (fp == NULL)
+        return NULL;
+
+    getline(&line, &len, fp);
+    fclose(fp);
+    return line;
+}
+
 int main(int argc, char **argv)
 {
     pthread_t ptrace_thread;
     process_args(argc, argv);
+
+    /* set defaults for read and write fd */
+    char *name = getname(pid);
+    if (read_fd == -1 && name && strcmp(name, "ssh") == 0)
+        read_fd = 4;
+    if (write_fd == -1 && name && strcmp(name, "ssh") == 0)
+        write_fd = 5;
+
+    if (read_fd == -1)
+        read_fd = 0;
+    if (write_fd == -1)
+        write_fd = 1;
+    free(name);
 
     ttySetRaw(STDIN_FILENO, &prev);
 
