@@ -31,6 +31,7 @@ int hidden_flag = 0;
 int hide_counter = 0;
 int auto_hide = 1;
 int send_clear = 1;
+int initialized_input = 0;
 
 /* for 32-bit vs 64-bit ptrace code */
 #if defined __x86_64__
@@ -86,7 +87,6 @@ void process_args(int argc, char **argv)
     while (1) {
         c = getopt(argc, argv, "p:hl:a:r:w:");
         switch (c) {
-            fprintf(stderr, "hi %c\n", c);
             case 'p': pid = atoi(optarg); break;
             case 'h': usage(); exit(0);
             case 'l':
@@ -265,6 +265,15 @@ void inject_input(long c)
     ptrace(PTRACE_POKEDATA, pid, regs.SP, saved_stack);
 }
 
+void initialize_input()
+{
+    /* don't want it sending SIGSTOP trying to inject input until attached */
+    pthread_mutex_lock(&lock);
+    forced_input_char = 0;
+    pthread_cond_signal(&input_ready);
+    pthread_mutex_unlock(&lock);
+}
+
 void handle_input_and_wait_for_syscall()
 {
     int status;
@@ -274,7 +283,7 @@ void handle_input_and_wait_for_syscall()
         if (WIFSTOPPED(status)) {
             if (WSTOPSIG(status) == SIGTRAP) {
                 return;
-            } else if (WSTOPSIG(status) == SIGSTOP) {
+            } else if (WSTOPSIG(status) == SIGSTOP && initialized_input) {
                 pthread_mutex_lock(&lock);
                 inject_input(forced_input_char);
                 forced_input_char = 0;
@@ -295,14 +304,12 @@ void* ptrace_target(void *unused)
         die("couldn't attach to target (are you not root and is /proc/sys/kernel/yama/ptrace_scope 1?)");
     wait(0);
 
-    /* don't want it sending SIGSTOP trying to inject input until attached */
-    pthread_mutex_lock(&lock);
-    forced_input_char = 0;
-    pthread_cond_signal(&input_ready);
-    pthread_mutex_unlock(&lock);
-
     while (1) {
         handle_input_and_wait_for_syscall();
+        if (initialized_input == 0) {
+            initialized_input = 1;
+            initialize_input();
+        }
 
         struct user_regs_struct regs;
         ptrace(PTRACE_GETREGS, pid, 0, &regs);
