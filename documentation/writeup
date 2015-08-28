@@ -1,0 +1,129 @@
+ttyrider is a tool for reading and writing to a program's tty, designed for
+getting access to outbound ssh connections from an already-compromised box.
+
+Of course, once you have root on a server, there are many ways to compromise
+outgoing ssh connections. A few methods are:
+
+1) Look in users' .ssh folder for ssh private keys.
+
+2) If a user is using password authentication or password-protected keys, run a
+keylogger and wait for them to use ssh again.
+
+3) If a user is using key based authentication with ssh-agent, set your
+SSH_AUTH_SOCK to theirs and get access to whatever computer they're connected
+to. Or steal the keys from ssh-agent memory with passe-partout.
+when html link to:
+http://www.hsc.fr/ressources/breves/passe-partout.html.enhttp://www.hsc.fr/ressources/breves/passe-partout.html.en
+
+4) Add to /etc/ssh/ssh_config (or ~/.ssh/config if you've only compromised
+their user account):
+Host *
+ControlMaster auto
+ControlPath /tmp/%r@%h:%p
+
+Then the next time they use ssh, use ssh -S with the control socket in /tmp to
+get access to whatever computer they're connecting to.
+
+
+The problem with these methods is that only 1 and 3 allow instant access to
+outgoing ssh connections, and they don't work for the most common usage of ssh,
+which is with passwords. Keylogging or configuring ssh to create control
+sockets requires waiting for the next time the target uses ssh. And I'm
+impatient, if I compromise server A, which a sysadmin is using to ssh to server
+B, I want instant access to server B. I don't want to start a keylogger and
+wait days hoping they authenticate to server B again so I can record the
+password. tty manipulation is one way to get instant access.
+
+There's been a few programs written over the years designed for people that
+forgot to start a program within screen, but that can also be used to grab a
+users' ssh process from their tty to yours to give you access to whatever
+remote server they're connected to. Ones I know of are screenify, retty,
+reptyr, injcode, and neercs. Of those, the one with the best writeup describing
+how it works is injcode, at: https://blog.habets.se/2009/03/Moving-a-process-to-another-terminal
+
+when html link to:
+https://gist.github.com/mikebern/8214869
+http://pasky.or.cz/dev/retty/http://pasky.or.cz/dev/retty/
+https://blog.nelhage.com/2011/01/reptyr-attach-a-running-process-to-a-new-terminal/
+https://github.com/ThomasHabets/injcode
+http://caca.zoy.org/wiki/neercs
+
+The problem with those tools, at least for this use case, is that it
+disconnects ssh from the user's tty. When pentesting, causing a disruption like
+that isn't acceptable. Even for a real world attacker, it's still very bad as
+causing unexpected behaviour like that can lead to the sysadmin investigating
+and discovering their presence.
+
+ttyrider aims to allow an attacker to run commands in a user's ssh session,
+while having that ssh session continue functioning normally for the user. It
+intercepts reads and writes to the tty, showing the attacker a mirror of the
+user's tty, without detaching ssh from the user's tty. It has a 'hidden' mode,
+where output will still show up in the attacker's copy, but not in the user's,
+and an 'autohide' setting which will automatically enter hidden mode whenever
+the attacker starts typing, and leave hidden mode whenever the actual user
+starts typing. In the normal use case of a command line ssh session with a
+remote host, this allows an attacker to run commands and view the output
+without it showing up in the user's terminal.
+
+Before explaining in more technical detail how it works, here's a gif showing
+ttyrider being used to run commands in an ssh session:
+ssh_demo.gif
+
+To run, ttyrider needs the ability to ptrace the target process. This means you
+need to be root, or be running as the same user and have
+/proc/sys/kernel/yama/ptrace_scope be set to 0. As far as I know, Ubuntu and
+Fedora (starting with F22), are the only distros to set ptrace_scope to 1 by
+default. So on any other distro, ttyrider can also be used for privilege
+escalation. If a user has used sudo or su to get a root shell, ttyrider is
+unable to read the output of that shell, but can send keystrokes to it by
+injecting TIOCSTI ioctl in the parent of the root shell. Here's a gif showing
+ttyrider being used to get root by injecting keystrokes into a root shell:
+su_demo.gif
+
+Now with some idea what the point of ttyrider is and what it can be used for,
+here's how it actually works:
+
+Reading output from the user's tty:
+This is straightforward and just involves monitoring the fd the target process
+writes to and copying all those writes to the attacker's tty. This can be done
+with strace and a shell one-liner:
+strace -e write -e write=5 -p`pgrep ssh` 2>&1 | stdbuf -o0 sh -c 'grep "^ |" | cut -b11-60 | tr -d " " | xxd -r -p'
+from https://unix.stackexchange.com/questions/85435/is-it-possible-for-a-sysadmin-to-eavesdrop-on-his-her-users-terminals/85442#85442
+
+Injecting input into a user's tty:
+This part is trickier. If you're root you can just use the TIOCSTI ioctl to
+send keystrokes to a tty, as seen in ttyecho. But, I wanted ttyrider to just
+need permission to ptrace, not root. A process can only use TIOCSTI on a TTY that
+is their controlling terminal. There's another ioctl, TIOCSCTTY, to set the
+controlling terminal, but it's denied if the tty in question is already the
+controlling terminal of another process. So we can't use that as the TTY is
+already the controlling terminal of our target process. I inject input by using
+ptrace to inject in the target process and making the TIOCSTI call from there.
+I copied the relatively simple method of injecting syscalls into a target
+process by breaking on and reusing an existing syscall instruction from neercs.
+
+in html: link ttyecho http://www.humbug.in/2010/utility-to-send-commands-or-data-to-other-terminals-ttypts/
+
+With the mechanics of tty input and output out of the way, the rest of the
+program is fairly straightforward:
+
+1) Set the attacker's tty to raw mode so that ctrl-C, ctrl-Z etc will all be
+sent to the target user's terminal and keystrokes will be sent instantly rather
+than line buffer. Commands for controlling ttyrider itself (to exit, or to
+toggle hiding and autohide mode), start with the ctrl-a shortcut, to send an
+actual ctrl-a, type ctrl-a twice.
+
+2) Start a thread which ptraces the target and copies all output to the
+attacker's terminal. When not run as root, this thread also handles using
+ptrace to inject input.
+
+3) In another thread, listen for input from the attacker. If we're running as
+root this thread uses TIOCSTI to inject input itself, since that's less risky
+than injecting syscalls into another process. When run as a normal user, this
+thread just adds input to a queue and sends a signal to wake up the ptrace
+thread to inject the input, since the target can only be ptrace attached once.
+
+Since ttyrider is designed to be run on a compromised box, the default Makefile
+will generate statically linked 32 and 64 bit binaries so you can just upload
+and run it. Let me know if you run in to any bugs, have ideas for features, how
+to make it easier to use, or know of a less messy solution!
