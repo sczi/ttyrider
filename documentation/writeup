@@ -12,7 +12,7 @@ keylogger and wait for them to use ssh again.
 3) If a user is using key based authentication with ssh-agent, set your
 SSH_AUTH_SOCK to theirs and get access to whatever computer they're connected
 to. Or steal the keys from ssh-agent memory with passe-partout.
-when html link to:
+
 http://www.hsc.fr/ressources/breves/passe-partout.html.enhttp://www.hsc.fr/ressources/breves/passe-partout.html.en
 
 4) Add to /etc/ssh/ssh_config (or ~/.ssh/config if you've only compromised
@@ -41,7 +41,7 @@ remote server they're connected to. Ones I know of are screenify, retty,
 reptyr, injcode, and neercs. Of those, the one with the best writeup describing
 how it works is injcode, at: https://blog.habets.se/2009/03/Moving-a-process-to-another-terminal
 
-when html link to:
+the others:
 https://gist.github.com/mikebern/8214869
 http://pasky.or.cz/dev/retty/http://pasky.or.cz/dev/retty/
 https://blog.nelhage.com/2011/01/reptyr-attach-a-running-process-to-a-new-terminal/
@@ -76,9 +76,8 @@ Fedora (starting with F22), are the only distros to set ptrace_scope to 1 by
 default. So on any other distro, ttyrider can also be used for privilege
 escalation. If a user has used sudo or su to get a root shell, ttyrider is
 unable to read the output of that shell, but can send keystrokes to it by
-injecting TIOCSTI ioctl in the parent of the root shell. Here's a gif showing
-ttyrider being used to get root by injecting keystrokes into a root shell:
-su_demo.gif
+injecting TIOCSTI ioctl in the parent of the root shell. su_demo.gif shows
+ttyrider being used to get root by injecting keystrokes into a root shell.
 
 Now with some idea what the point of ttyrider is and what it can be used for,
 here's how it actually works:
@@ -102,7 +101,7 @@ ptrace to inject in the target process and making the TIOCSTI call from there.
 I copied the relatively simple method of injecting syscalls into a target
 process by breaking on and reusing an existing syscall instruction from neercs.
 
-in html: link ttyecho http://www.humbug.in/2010/utility-to-send-commands-or-data-to-other-terminals-ttypts/
+ttyecho: http://www.humbug.in/2010/utility-to-send-commands-or-data-to-other-terminals-ttypts/
 
 With the mechanics of tty input and output out of the way, the rest of the
 program is fairly straightforward:
